@@ -1,0 +1,5 @@
+.venv/
+*.pyc
+*.swp
+graveyard/
+__pycache__/
