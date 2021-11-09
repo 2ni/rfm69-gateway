@@ -8,6 +8,7 @@ using adapted library jgillula
 https://rpi-rfm69.readthedocs.io/en/latest/example_basic.html#better-transceiver
 """
 
+import sys  # noqa: F401
 import time  # noqa: F401
 from datetime import datetime as dt  # noqa: F401
 import threading
@@ -19,18 +20,74 @@ network_id = 33
 recipient_id = 0x1E9522
 
 
+def eval_expression(input_string):
+    """
+    secured eval
+    https://realpython.com/python-eval-function/#restricting-globals-and-locals
+    """
+    allowed_names = {}
+    code = compile(input_string, "<string>", "eval")
+    for name in code.co_names:
+        if name not in allowed_names:
+            raise NameError(f"Use of {name} not allowed")
+    return eval(code, {"__builtins__": {}}, allowed_names)
+
+
+def decodeStream(stream):
+    """
+    stream = [0x01, 0xff, 0x14, 0x12, 0x34, 0x56, 0x78]
+    """
+    # print("stream", stream)
+    total_len = len(stream)
+    i = 0
+    data_packets = {}
+    types = {
+        0x00: {"name": "dbg",       "exp": "{0}"},                               # noqa: E241 8bit
+        0x01: {"name": "timestamp", "exp": "{0}<<24 | {1}<<16 | {2}<<7 | {3}"},  # 32bit
+        0x08: {"name": "vcc",       "exp": "{0}<<8 | {1}"}                       # noqa: E241 16bit
+    }
+
+    while i < total_len:
+        first_byte = stream[i]
+        data_type, data_len = (first_byte >> 4, first_byte & 0x0f)
+        i += 1  # 1st byte is type/len
+        ii = 0
+        data = []
+        while ii < data_len:
+            data.append(stream[i + ii])
+            ii += 1
+
+        data_packets[types[data_type]["name"]] = eval_expression(types[data_type]["exp"].format(*data))
+        # data_packets[types[data_type]] = ["0x{:02x}".format(x) for x in data]
+        i += ii
+
+    return data_packets
+
+
 def receiveFunction(radio):
     while True:
         # This call will block until a packet is received
         packet = radio.get_packet()
+        ack_sent = False
         if (packet.ack_requested):
             # send current timestamp in seconds (uint32_t)
-            #  now = int(time.time())
-            #  radio.send_ack(packet.sender, [(now >> i & 0xff) for i in (24, 16, 8, 0)])
-            radio.send_ack(packet.sender, dt.now().strftime("%Y-%m-%d %H:%M:%S"))  # return the current datestamp to the sender
-            print("ack | ", end="")
+            # [type|len](1) [ts](4)
+            now = int(time.time())
+            radio.send_ack(packet.sender, [0x01 << 4 | 0x04] + [(now >> i & 0xff) for i in (24, 16, 8, 0)])
+            #  radio.send_ack(packet.sender, dt.now().strftime("%Y-%m-%d %H:%M:%S"))  # return the current datestamp to the sender
+            ack_sent = True
 
-        print("from 0x{:02X}: \"{}\" ({}dBm)".format(packet.sender, packet.data_string, packet.RSSI))
+        decoded = decodeStream(packet.data)
+        print("from 0x{sender:02x} ({rssi}dBm)\n  \033[32;1mdbg: {dbg}\033[0m\n  \033[32;1mvcc: {vcc}\033[0m\n  ack sent: {ack}\n  data: {data}\n  raw: {raw}".format(
+            sender=packet.sender,
+            dbg=decoded.get("dbg", "-"),
+            vcc=decoded.get("vcc", "-"),
+            rssi=packet.RSSI,
+            ack=now if ack_sent else False,
+            data=decoded,
+            raw=["0x{:02x}".format(x) for x in packet.data]
+        ))
+        #  print("from 0x{:02X}: \"{}\" ({}dBm)".format(packet.sender, packet.data_string, packet.RSSI))
         #  print("from %s: \"%s\" (%sdBm)" % (packet.sender, packet.data_string, packet.RSSI))
 
 
