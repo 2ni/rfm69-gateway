@@ -19,13 +19,26 @@ gateway_id = 99
 network_id = 33
 recipient_id = 0x1E9522
 
+rssi_target = -90
+
+types_download = {
+    0x00: {"name": "dbg",       "exp": "{0}"},          # noqa: E241 8bit
+    0x01: {"name": "vcc",       "exp": "{0}<<8 | {1}"}  # noqa: E241 16bit
+}
+
+types_upload = {
+    "timestamp": {"type": 0x01, "len": 4, "exp": "[({0} >> i & 0xff) for i in (24, 16, 8, 0)]"},
+    "rssi"     : {"type": 0x03, "len": 1, "exp": "[{0}]"}  # noqa: E203
+    # "rssi"     : "[0x03, abs({0})]"  # noqa: E203
+}
+
 
 def eval_expression(input_string):
     """
     secured eval
     https://realpython.com/python-eval-function/#restricting-globals-and-locals
     """
-    allowed_names = {}
+    allowed_names = {"abs": abs}
     code = compile(input_string, "<string>", "eval")
     for name in code.co_names:
         if name not in allowed_names:
@@ -33,7 +46,24 @@ def eval_expression(input_string):
     return eval(code, {"__builtins__": {}}, allowed_names)
 
 
-def decodeStream(stream):
+def get_type_len(byte):
+    """ get type and length from first byte of data_packet """
+    return (byte >> 4, byte & 0x0f)
+
+
+def set_type_len(data_type, data_len):
+    """ create byte of type and length of data_packet for first byte """
+    return ((data_type & 0x0f)) << 4 | (data_len & 0x0f)
+
+
+def create_data_packet(type_name, value):
+    first_byte = set_type_len(types_upload[type_name]["type"], types_upload[type_name]["len"])
+    data = eval_expression(types_upload[type_name]["exp"].format(value))
+    #  print("data", [to_hex(x) for x in data])
+    return [first_byte] + data
+
+
+def decode_payload(stream):
     """
     stream = [0x01, 0xff, 0x14, 0x12, 0x34, 0x56, 0x78]
     """
@@ -41,15 +71,9 @@ def decodeStream(stream):
     total_len = len(stream)
     i = 0
     data_packets = {}
-    types = {
-        0x00: {"name": "dbg",       "exp": "{0}"},                               # noqa: E241 8bit
-        0x01: {"name": "timestamp", "exp": "{0}<<24 | {1}<<16 | {2}<<7 | {3}"},  # 32bit
-        0x08: {"name": "vcc",       "exp": "{0}<<8 | {1}"}                       # noqa: E241 16bit
-    }
 
     while i < total_len:
-        first_byte = stream[i]
-        data_type, data_len = (first_byte >> 4, first_byte & 0x0f)
+        data_type, data_len = get_type_len(stream[i])
         i += 1  # 1st byte is type/len
         ii = 0
         data = []
@@ -57,11 +81,19 @@ def decodeStream(stream):
             data.append(stream[i + ii])
             ii += 1
 
-        data_packets[types[data_type]["name"]] = eval_expression(types[data_type]["exp"].format(*data))
-        # data_packets[types[data_type]] = ["0x{:02x}".format(x) for x in data]
+        data_packets[types_download[data_type]["name"]] = eval_expression(types_download[data_type]["exp"].format(*data))
+        # data_packets[types_download[data_type]] = ["0x{:02x}".format(x) for x in data]
         i += ii
 
     return data_packets
+
+
+def sign(number):
+    return -1 if number < 0 else 1
+
+
+def to_hex(val, nbits=8):
+    return hex((val + (1 << nbits)) % (1 << nbits))
 
 
 def receiveFunction(radio):
@@ -70,25 +102,37 @@ def receiveFunction(radio):
         packet = radio.get_packet()
         ack_sent = False
         if (packet.ack_requested):
-            # send current timestamp in seconds (uint32_t)
-            # [type|len](1) [ts](4)
+            data_packets = []
+            # return possible power change (rssi)
+            rssi_diff = rssi_target - packet.RSSI
+            rssi_change = sign(rssi_diff) if abs(rssi_diff) > 3 else 0
+            if rssi_change:
+                data_packets += create_data_packet("rssi", rssi_change)
+
+            # return timestamp in seconds (uint32_t)
             now = int(time.time())
-            radio.send_ack(packet.sender, [0x01 << 4 | 0x04] + [(now >> i & 0xff) for i in (24, 16, 8, 0)])
+            data_packets += create_data_packet("timestamp", now)
+
+            print("data_packets", [to_hex(x) for x in data_packets])
+            radio.send_ack(packet.sender, data_packets)
             #  radio.send_ack(packet.sender, dt.now().strftime("%Y-%m-%d %H:%M:%S"))  # return the current datestamp to the sender
             ack_sent = True
 
-        decoded = decodeStream(packet.data)
-        print("from 0x{sender:02x} ({rssi}dBm)\n  \033[32;1mdbg: {dbg}\033[0m\n  \033[32;1mvcc: {vcc}\033[0m\n  ack sent: {ack}\n  data: {data}\n  raw: {raw}".format(
-            sender=packet.sender,
-            dbg=decoded.get("dbg", "-"),
-            vcc=decoded.get("vcc", "-"),
-            rssi=packet.RSSI,
-            ack=now if ack_sent else False,
-            data=decoded,
-            raw=["0x{:02x}".format(x) for x in packet.data]
-        ))
-        #  print("from 0x{:02X}: \"{}\" ({}dBm)".format(packet.sender, packet.data_string, packet.RSSI))
-        #  print("from %s: \"%s\" (%sdBm)" % (packet.sender, packet.data_string, packet.RSSI))
+        decoded = decode_payload(packet.data)
+        print("from 0x{sender:02x} (\033[33;1m{rssi}dBm\033[0m)\n"
+              "  \033[32;1mdbg: {dbg}\033[0m\n"
+              "  \033[32;1mvcc: {vcc}\033[0m\n"
+              "  ack sent: {ack}\n"
+              "  data: {data}\n"
+              "  raw: {raw}".format(
+                  sender=packet.sender,
+                  dbg=decoded.get("dbg", "-"),
+                  vcc=decoded.get("vcc", "-"),
+                  rssi=packet.RSSI,
+                  ack=now if ack_sent else False,
+                  data=decoded,
+                  raw=["0x{:02x}".format(x) for x in packet.data]
+              ))
 
 
 try:
