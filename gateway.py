@@ -22,14 +22,14 @@ recipient_id = 0x1E9522
 rssi_target = -90
 
 types_download = {
-    0x00: {"name": "dbg",       "exp": "{0}"},          # noqa: E241 8bit
-    0x01: {"name": "vcc",       "exp": "{0}<<8 | {1}"}  # noqa: E241 16bit
+    0x00: {"name": "dbg", "exp": "{0}"},  # 8bit
+    0x01: {"name": "vcc", "exp": "{0}<<8 | {1}"},  # 16bit
+    0x03: {"name": "rssi", "exp": "{{'limit': ({0}&0x80)>>7, 'reset': ({0}&0x40)>>6, 'pwrchange': {0}&0x0f, 'value': {1}}}"}  # 16bit
 }
 
 types_upload = {
     "timestamp": {"type": 0x01, "len": 4, "exp": "[({0} >> i & 0xff) for i in (24, 16, 8, 0)]"},
-    "rssi"     : {"type": 0x03, "len": 1, "exp": "[{0}]"}  # noqa: E203
-    # "rssi"     : "[0x03, abs({0})]"  # noqa: E203
+    "rssi"     : {"type": 0x03, "len": 1, "exp": "[{0}&0x0f]"}  # noqa: E203
 }
 
 
@@ -97,42 +97,52 @@ def to_hex(val, nbits=8):
 
 
 def receiveFunction(radio):
+    rssi_atc_on_duty = True
     while True:
         # This call will block until a packet is received
         packet = radio.get_packet()
         ack_sent = False
         if (packet.ack_requested):
-            data_packets = []
-            # return possible power change (rssi)
-            rssi_diff = rssi_target - packet.RSSI
-            rssi_change = sign(rssi_diff) if abs(rssi_diff) > 3 else 0
-            if rssi_change:
-                data_packets += create_data_packet("rssi", rssi_change)
+            data_packets_received = decode_payload(packet.data)
+            data_packets_to_send = []
+            # return possible power change (rssi) if not reached limit
+            rss_ctrl = data_packets_received.get("rssi", {})
+
+            if rss_ctrl.get("reset"):
+                rssi_atc_on_duty = True
+            elif rssi_atc_on_duty and rss_ctrl.get("limit"):
+                rssi_atc_on_duty = False
+
+            if rssi_atc_on_duty:
+                rssi_diff = rssi_target - packet.RSSI
+                rssi_change = sign(rssi_diff) if abs(rssi_diff) > 3 else 0
+                if rssi_change:
+                    data_packets_to_send += create_data_packet("rssi", rssi_change)
 
             # return timestamp in seconds (uint32_t)
             now = int(time.time())
-            data_packets += create_data_packet("timestamp", now)
+            data_packets_to_send += create_data_packet("timestamp", now)
 
-            print("data_packets", [to_hex(x) for x in data_packets])
-            radio.send_ack(packet.sender, data_packets)
+            radio.send_ack(packet.sender, data_packets_to_send)
             #  radio.send_ack(packet.sender, dt.now().strftime("%Y-%m-%d %H:%M:%S"))  # return the current datestamp to the sender
             ack_sent = True
 
-        decoded = decode_payload(packet.data)
-        print("from 0x{sender:02x} (\033[33;1m{rssi}dBm\033[0m)\n"
-              "  \033[32;1mdbg: {dbg}\033[0m\n"
-              "  \033[32;1mvcc: {vcc}\033[0m\n"
-              "  ack sent: {ack}\n"
-              "  data: {data}\n"
-              "  raw: {raw}".format(
+        print(("from 0x{sender:02x} (\033[33;1m{rssi}dBm\033[0m)\n"
+               "  \033[32;1mdbg: {dbg}\033[0m\n"
+               "  \033[32;1mvcc: {vcc}\033[0m\n"
+               "  received raw: {received}\n"
+               "  received: {data}\n"
+               + ("  ack sent: {ack}\n  sent: {sent}" if ack_sent else ""))  # noqa: W503
+              .format(
                   sender=packet.sender,
-                  dbg=decoded.get("dbg", "-"),
-                  vcc=decoded.get("vcc", "-"),
+                  dbg=data_packets_received.get("dbg", "-"),
+                  vcc=data_packets_received.get("vcc", "-"),
                   rssi=packet.RSSI,
-                  ack=now if ack_sent else False,
-                  data=decoded,
-                  raw=["0x{:02x}".format(x) for x in packet.data]
-              ))
+                  ack=now,
+                  data=data_packets_received,
+                  received=[to_hex(x) for x in packet.data],
+                  sent=[to_hex(x) for x in data_packets_to_send]
+        ))
 
 
 try:
