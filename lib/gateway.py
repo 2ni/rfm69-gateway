@@ -62,8 +62,8 @@ class Gateway:
 
         while True:
             data = q.get()
-            custom_upload = f_callback(**data) or {}
-            if data["ack_requested"]:
+            custom_upload = f_callback(self, **data) or {}
+            if data["ack_requested"] and custom_upload:
                 self.radio.send_ack(data["sender"], self.create_data_packets({**data["upload"], **custom_upload}))
 
     @staticmethod

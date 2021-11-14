@@ -1,6 +1,4 @@
-import sys  # noqa: F401
-import time  # noqa: F401
-from datetime import datetime as dt  # noqa: F401
+import time
 from lib import Gateway
 
 dataPacketTypes = {
@@ -15,7 +13,7 @@ dataPacketTypes = {
 }
 
 
-def callback(download, upload, sender, ack_requested, rssi):
+def callback(gateway, download, upload, sender, ack_requested, rssi):
     """
     download: data from node
         download["unknown"] contains data not configured in dataPacketTypes
@@ -23,12 +21,23 @@ def callback(download, upload, sender, ack_requested, rssi):
     sender: ID from node
     ack_requested: if node requested an ack
     rssi: RSSI of data receiption
+    gateway: can be used to send the ack in this code to not block the ack response, eg:
+        if ack_requested:
+            now = int(time.time())
+            gateway.radio.send_ack(sender, self.create_data_packets({**upload, **{"timestamp": now}}))
+
+        # do stuff with the data after sending ack
     """
-    # send timestamp in seconds (uint32_t)
+
+    # do some stuff with data from node
+    # should not block and be fast, best async
+    print("{} from 0x{:06x} ({}dBm)".format(download, sender, rssi), flush=True)
+
+    # send data back to node with ack
+    # eg timestamp in seconds (uint32_t)
     now = int(time.time())
     to_upload = {"timestamp": now}
 
-    print("{} from 0x{:06x} ({}dBm)".format(download, sender, rssi), flush=True)
     return to_upload
 
 
