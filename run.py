@@ -16,6 +16,14 @@ dataPacketTypes = {
 
 
 def callback(download, upload, sender, ack_requested, rssi):
+    """
+    download: data from node
+        download["unknown"] contains data not configured in dataPacketTypes
+    upload: potential system upload data which will be sent to gw (don't touch)
+    sender: ID from node
+    ack_requested: if node requested an ack
+    rssi: RSSI of data receiption
+    """
     # send timestamp in seconds (uint32_t)
     now = int(time.time())
     to_upload = {"timestamp": now}
