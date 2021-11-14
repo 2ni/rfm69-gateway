@@ -509,11 +509,11 @@ class Radio:
         self._writeReg(REG_TESTPA2, 0x7C if onOff else 0x70)
 
     def _shutdown(self):
-        print("shutting down")
         """Shutdown the radio.
 
         Puts the radio to sleep and cleans up the GPIO connections.
         """
+        print("\rshutting down")
         GPIO.remove_event_detect(self.intPin)
         self._modeLock.acquire()
         self._setHighPower(False)
