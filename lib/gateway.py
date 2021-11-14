@@ -24,7 +24,7 @@ class Gateway:
 
         self.types = dataPacketTypes
         # needed internally, ensure rssi exists
-        self.types["upload"] = self.types.get("upload", {})
+        self.types["upload"] = self.types.get("upload", {})  # create if not exists
         self.types["upload"]["rssi"] = {"type": 0x03, "len": 1, "exp": "[{0}&0x0f]"}
 
         self.rssi_target = -90
@@ -105,7 +105,7 @@ class Gateway:
         """
         payload = [0x01, 0xff, 0x14, 0x12, 0x34, 0x56, 0x78]
         """
-        # print("payload", payload)
+        # print("payload", ["0x{:02x}".format(x) for x in payload])
         total_len = len(payload)
         i = 0
         data_packets = {}
@@ -114,20 +114,22 @@ class Gateway:
             data_type, data_len = self.get_type_len(payload[i])
             definition = self.types["download"].get(data_type)
             i += 1  # 1st byte is type/len
-            if definition:
-                ii = 0
-                data = []
-                while ii < data_len:
-                    data.append(payload[i + ii])
-                    ii += 1
 
-                #  TODO catch error if can not decode "exp"
+            ii = 0
+            data = []
+            while ii < data_len:
+                data.append(payload[i + ii])
+                ii += 1
+
+            #  TODO catch error if can not decode "exp"
+            # check if type defined
+            if definition:
                 data_packets[definition["name"]] = self.eval_expression(definition["exp"].format(*data))
-                # data_packets[types_download[data_type]] = ["0x{:02x}".format(x) for x in data]
-                i += ii
             else:
-                i += data_len
-                #  print("unkown type 0x{:02x}".format(data_type))
+                data_packets["unknown"] = data_packets.get("unknown", {})  # create if not exists
+                data_packets["unknown"][data_type] = data
+            # data_packets[types_download[data_type]] = ["0x{:02x}".format(x) for x in data]
+            i += ii
 
         return data_packets
 
@@ -179,16 +181,15 @@ class Gateway:
                    "  \033[32;1mvcc: {vcc}\033[0m\n"
                    "  received raw: {received}\n"
                    "  received: {data}\n"
-                   + ("  ack sent: {ack}\n  sent: {sent}" if packet.ack_requested else ""))  # noqa: W503
+                   + ("  sent: {sent}" if packet.ack_requested else ""))  # noqa: W503
                   .format(
                       sender=packet.sender,
                       dbg=data_packets_received.get("dbg", "-"),
                       vcc=data_packets_received.get("vcc", "-"),
                       rssi=packet.RSSI,
-                      ack=now,
                       data=data_packets_received,
                       received=[self.to_hex(x) for x in packet.data],
-                      sent=[self.to_hex(x) for x in data_packets_to_send]
+                      sent=to_upload
             ))
             """
 
