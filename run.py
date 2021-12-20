@@ -12,6 +12,16 @@ dataPacketTypes = {
 }
 
 
+def colorize(color, str):
+    colors = {"red": "31", "green": "32", "yellow": "33"}
+    color_code = colors.get(color)
+
+    if color_code:
+        return "\033[{};1m{}\033[0m".format(color_code, str)
+    else:
+        return str
+
+
 def callback(gateway, download, upload, sender, ack_requested, rssi):
     """
     @return dict with data to upload. Return false if send_ack processed in this function
@@ -31,7 +41,8 @@ def callback(gateway, download, upload, sender, ack_requested, rssi):
 
     # do some stuff with data from node
     # should not block and be fast, best async
-    print("{} from 0x{:06x} ({}dBm)".format(download, sender, rssi), flush=True)
+
+    print("  {} from 0x{:06x} ({}dBm)".format(colorize("green", download), sender, rssi), flush=True)
 
     # send data back to node with ack
     # eg timestamp in seconds (uint32_t)

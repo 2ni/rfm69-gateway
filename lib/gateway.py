@@ -14,6 +14,7 @@ from datetime import datetime as dt  # noqa: F401
 import threading
 from . import Radio, FREQ_868MHZ, FormatDefaults
 from .registers import REG_VERSION
+from random import randrange
 
 
 class Gateway:
@@ -154,10 +155,11 @@ class Gateway:
     def get_rssi_correction(self, rssi):
         """ return 0 if limit reached or no change necessary """
         rssi_diff = self.rssi_target - rssi
-        rssi_factor = 0
         rssi_diff_absolute = abs(rssi_diff)
-        if rssi_diff_absolute > 2:
-            rssi_factor = 7 if rssi_diff_absolute > 14 else (4 if rssi_diff_absolute > 7 else 1)
+        rssi_factor = 0
+        # rssi_diff_absolute: rssi_factor
+        rssi_factors = {14: 7, 7: 4, 4: 2, 2: 1, 0: 0}
+        rssi_factor = rssi_factors[list(filter(lambda x: x <= rssi_diff_absolute, rssi_factors))[0]]
 
         return rssi_factor * self.sign(rssi_diff)
 
@@ -166,9 +168,10 @@ class Gateway:
             # This call will block until a packet is received
             packet = self.radio.get_packet()
             data_packets_received = self.decode_payload(packet.data)
+            print("received {} ({}dBm)".format(data_packets_received, packet.RSSI))
             to_upload = {}
             rssi_data_to_upload = {}
-            print("node", self.nodes.get(packet.sender, {}))
+            print("  node", self.nodes.get(packet.sender, {}))
             if (packet.ack_requested):
                 rssi_dp = data_packets_received.get("rssi", {})
                 self.nodes[packet.sender] = self.nodes.get(packet.sender, {})  # ensure self.nodes[nodeId] exists
@@ -184,17 +187,21 @@ class Gateway:
                 elif rssi_dp.get("limit"):
                     self.nodes[packet.sender]["atc_on_node"] = False  # atc was done at some point
 
+                # run atc on node (always unless limit reached, whereas node needs to reset to re-start)
                 if self.nodes[packet.sender]["atc_on_node"]:
-                    rssi_data_to_upload["pwrchange"] = self.get_rssi_correction(packet.RSSI)
-                    if self.nodes[packet.sender]["atc_on_node"] and not rssi_data_to_upload["pwrchange"]:
-                        self.nodes[packet.sender]["atc_on_node"] = False
+                    power_diff = self.get_rssi_correction(packet.RSSI)
+                    if power_diff:
+                        rssi_data_to_upload["pwrchange"] = power_diff
 
-                # only run atc on gw if atc_on_node is not running
-                if not self.nodes[packet.sender]["atc_on_node"] and self.nodes[packet.sender]["atc_on_gw"]:
-                    last_rssi = -rssi_dp.get("last_rssi", 0)
+                # run atc on gw (only run if we got rssi from node
+                last_rssi = -rssi_dp.get("last_rssi", 0)
+                if self.nodes[packet.sender]["atc_on_gw"] or last_rssi:
                     if last_rssi:
+                        if "random_rssi_request" in self.nodes[packet.sender].keys():
+                            del self.nodes[packet.sender]["random_rssi_request"]
+
                         rssi_correction = self.get_rssi_correction(last_rssi)
-                        print("rssi: {} -> {} ({}dBm)".format(self.radio.powerLevel, rssi_correction, last_rssi))
+                        print("  gw pwr: {} -> {} ({}dBm)".format(self.radio.powerLevel, rssi_correction, last_rssi))
                         if rssi_correction and self.radio.set_power_level_relative(rssi_correction):
                             rssi_data_to_upload["request"] = 1  # more correction possible, request reception rssi from node
                         else:
@@ -203,6 +210,15 @@ class Gateway:
                         self.nodes[packet.sender]["power_level"] = self.radio.get_power_level()
                     else:
                         rssi_data_to_upload["request"] = 1  # request reception rssi from node
+                # sporadically request rssi to do atc_on_gw
+                elif "random_rssi_request" not in self.nodes[packet.sender].keys():
+                    rand = randrange(10, 20)
+                    self.nodes[packet.sender]["random_rssi_request"] = rand
+                elif self.nodes[packet.sender].get("random_rssi_request", 0):
+                    self.nodes[packet.sender]["random_rssi_request"] -= 1
+                elif self.nodes[packet.sender].get("random_rssi_request", -1) == 0:
+                    rssi_data_to_upload["request"] = 1  # request reception rssi from node
+                    self.nodes[packet.sender]["random_rssi_request"] = randrange(10, 20)
 
                 if rssi_data_to_upload:
                     to_upload = {"rssi": rssi_data_to_upload}
@@ -217,6 +233,7 @@ class Gateway:
 
             #  if custom_upload is False -> send_ack was processed in callback
             if packet.ack_requested and custom_upload:
+                print("  sending", {**to_upload, **custom_upload})
                 self.radio.send_ack(packet.sender, self.create_data_packets({**to_upload, **custom_upload}))
                 #  self.radio.send_ack(packet.sender, self.create_data_packets(to_upload))
                 #  radio.send_ack(packet.sender, dt.now().strftime("%Y-%m-%d %H:%M:%S"))  # return the current datestamp to the sender
