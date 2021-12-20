@@ -5,7 +5,6 @@ dataPacketTypes = {
     "download": {
         0x00: {"name": "dbg", "exp": "{0}"},  # 8bit
         0x01: {"name": "vcc", "exp": "{0}<<8 | {1}"},  # 16bit
-        0x03: {"name": "rssi", "exp": "{{'limit': ({0}&0x80)>>7, 'reset': ({0}&0x40)>>6, 'pwrchange': {0}&0x0f, 'value': {1}}}"}  # 16bit
     },
     "upload": {
         "timestamp": {"type": 0x01, "len": 4, "exp": "[({0} >> i & 0xff) for i in (24, 16, 8, 0)]"},
@@ -15,6 +14,7 @@ dataPacketTypes = {
 
 def callback(gateway, download, upload, sender, ack_requested, rssi):
     """
+    @return dict with data to upload. Return false if send_ack processed in this function
     download: data from node
         download["unknown"] contains data not configured in dataPacketTypes
     upload: potential system upload data which will be sent to gw (don't touch)

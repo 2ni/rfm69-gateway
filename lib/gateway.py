@@ -12,8 +12,7 @@ import sys  # noqa: F401
 import time  # noqa: F401
 from datetime import datetime as dt  # noqa: F401
 import threading
-import queue
-from . import Radio, FREQ_868MHZ
+from . import Radio, FREQ_868MHZ, FormatDefaults
 from .registers import REG_VERSION
 
 
@@ -23,9 +22,22 @@ class Gateway:
                  isHighPower=True, verbose=False, interruptPin=18, resetPin=29, autoAcknowledge=False, power=23, dataPacketTypes=None):
 
         self.types = dataPacketTypes
+        self.formatdefaults = FormatDefaults()  # we use our own "".format() which sets placeholder=0 if not defined
+
         # needed internally, ensure rssi exists
         self.types["upload"] = self.types.get("upload", {})  # create if not exists
-        self.types["upload"]["rssi"] = {"type": 0x03, "len": 1, "exp": "[{0}&0x0f]"}
+        self.types["upload"]["rssi"] = {
+            "type": 0x03,
+            "len": 1,
+            # sending last_rssi not supported
+            "exp": "[(({limit} and 0x01)<<7) | (({reset} and 0x01)<<6) | (({request} and 0x01)<<5) | ({pwrchange}&0x0f)]"
+        }
+        self.types["download"] = self.types.get("download", {})  # create if not exists
+        self.types["download"][0x03] = {
+            "name": "rssi",
+            "exp": "{{'limit': ({0}&0x80)>>7, 'reset': ({0}&0x40)>>6, 'pwrchange': {0}&0x0f, 'last_rssi': {1}}}"
+        }  # 16bit
+        self.nodes = {}  # info about the node we communicate with (atc_on_node, atc_on_gw, power_level)
 
         self.rssi_target = -90
 
@@ -52,19 +64,12 @@ class Gateway:
         self.radio.__exit__()
 
     def listen(self, f_callback):
-        q = queue.Queue()
         # create a thread to run receiveFunction in the background and start it
-        receiveThread = threading.Thread(target=self.receiveFunction, args=(q,))
+        receiveThread = threading.Thread(target=self.receiveFunction, args=(f_callback,))
         receiveThread.daemon = True
         receiveThread.start()
 
         print("waiting for data")
-
-        while True:
-            data = q.get()
-            custom_upload = f_callback(self, **data) or {}
-            if data["ack_requested"] and custom_upload:
-                self.radio.send_ack(data["sender"], self.create_data_packets({**data["upload"], **custom_upload}))
 
     @staticmethod
     def eval_expression(input_string):
@@ -96,9 +101,14 @@ class Gateway:
         data_stream = []
         for type_name, value in dict_or_name.items():
             definition = self.types["upload"][type_name]
-            first_byte = self.set_type_len(definition["type"], definition["len"])
-            data_stream += [first_byte] + self.eval_expression(definition["exp"].format(value))
-            #  print("data_stream", [to_hex(x) for x in data_stream])
+            packet_type_len = self.set_type_len(definition["type"], definition["len"])
+            if isinstance(value, dict):
+                packet_data = self.eval_expression(self.formatdefaults.format(definition["exp"], **value))
+            else:
+                packet_data = self.eval_expression(self.formatdefaults.format(definition["exp"], value))
+
+            data_stream += [packet_type_len] + packet_data
+            #  print("data_stream", [self.to_hex(x) for x in data_stream])
         return data_stream
 
     def decode_payload(self, payload):
@@ -141,40 +151,76 @@ class Gateway:
     def to_hex(val, nbits=8):
         return hex((val + (1 << nbits)) % (1 << nbits))
 
-    def receiveFunction(self, queue):
-        rssi_atc_on_duty = True
+    def get_rssi_correction(self, rssi):
+        """ return 0 if limit reached or no change necessary """
+        rssi_diff = self.rssi_target - rssi
+        rssi_factor = 0
+        rssi_diff_absolute = abs(rssi_diff)
+        if rssi_diff_absolute > 2:
+            rssi_factor = 7 if rssi_diff_absolute > 14 else (4 if rssi_diff_absolute > 7 else 1)
+
+        return rssi_factor * self.sign(rssi_diff)
+
+    def receiveFunction(self, f_callback):
         while True:
             # This call will block until a packet is received
             packet = self.radio.get_packet()
             data_packets_received = self.decode_payload(packet.data)
             to_upload = {}
+            rssi_data_to_upload = {}
+            print("node", self.nodes.get(packet.sender, {}))
             if (packet.ack_requested):
-                # return possible power change (rssi) if not reached limit
-                rss_ctrl = data_packets_received.get("rssi", {})
+                rssi_dp = data_packets_received.get("rssi", {})
+                self.nodes[packet.sender] = self.nodes.get(packet.sender, {})  # ensure self.nodes[nodeId] exists
+                self.radio.set_power_level(self.nodes[packet.sender].get("power_level", 23))
+                if "atc_on_node" not in self.nodes[packet.sender]:
+                    self.nodes[packet.sender]["atc_on_node"] = True
+                if "atc_on_gw" not in self.nodes[packet.sender]:
+                    self.nodes[packet.sender]["atc_on_gw"] = True
 
-                if rss_ctrl.get("reset"):
-                    rssi_atc_on_duty = True
-                elif rssi_atc_on_duty and rss_ctrl.get("limit"):
-                    rssi_atc_on_duty = False
+                if rssi_dp.get("reset"):
+                    self.nodes[packet.sender]["atc_on_node"] = True  # atc running
+                    self.nodes[packet.sender]["atc_on_gw"] = True
+                elif rssi_dp.get("limit"):
+                    self.nodes[packet.sender]["atc_on_node"] = False  # atc was done at some point
 
-                if rssi_atc_on_duty:
-                    rssi_diff = self.rssi_target - packet.RSSI
-                    rssi_diff_absolute = abs(rssi_diff)
-                    rssi_factor = 7 if rssi_diff_absolute > 14 else (4 if rssi_diff_absolute > 7 else 1)
-                    rssi_change = rssi_factor * self.sign(rssi_diff) if rssi_diff_absolute > 2 else 0
-                    if rssi_change:
-                        to_upload = {"rssi": rssi_change}
+                if self.nodes[packet.sender]["atc_on_node"]:
+                    rssi_data_to_upload["pwrchange"] = self.get_rssi_correction(packet.RSSI)
+                    if self.nodes[packet.sender]["atc_on_node"] and not rssi_data_to_upload["pwrchange"]:
+                        self.nodes[packet.sender]["atc_on_node"] = False
 
-                #  self.radio.send_ack(packet.sender, self.create_data_packets(to_upload))
-                #  radio.send_ack(packet.sender, dt.now().strftime("%Y-%m-%d %H:%M:%S"))  # return the current datestamp to the sender
+                # only run atc on gw if atc_on_node is not running
+                if not self.nodes[packet.sender]["atc_on_node"] and self.nodes[packet.sender]["atc_on_gw"]:
+                    last_rssi = -rssi_dp.get("last_rssi", 0)
+                    if last_rssi:
+                        rssi_correction = self.get_rssi_correction(last_rssi)
+                        print("rssi: {} -> {} ({}dBm)".format(self.radio.powerLevel, rssi_correction, last_rssi))
+                        if rssi_correction and self.radio.set_power_level_relative(rssi_correction):
+                            rssi_data_to_upload["request"] = 1  # more correction possible, request reception rssi from node
+                        else:
+                            self.nodes[packet.sender]["atc_on_gw"] = False  # limits reached -> turn atc_on_gw off
 
-            queue.put({
+                        self.nodes[packet.sender]["power_level"] = self.radio.get_power_level()
+                    else:
+                        rssi_data_to_upload["request"] = 1  # request reception rssi from node
+
+                if rssi_data_to_upload:
+                    to_upload = {"rssi": rssi_data_to_upload}
+
+            # call callback to process data from node
+            custom_upload = f_callback(self, **{
                 "download": data_packets_received,
                 "upload": to_upload,
                 "sender": packet.sender,
                 "ack_requested": packet.ack_requested,
-                "rssi": packet.RSSI
-            })
+                "rssi": packet.RSSI})
+
+            #  if custom_upload is False -> send_ack was processed in callback
+            if packet.ack_requested and custom_upload:
+                self.radio.send_ack(packet.sender, self.create_data_packets({**to_upload, **custom_upload}))
+                #  self.radio.send_ack(packet.sender, self.create_data_packets(to_upload))
+                #  radio.send_ack(packet.sender, dt.now().strftime("%Y-%m-%d %H:%M:%S"))  # return the current datestamp to the sender
+
             """
             print(("from 0x{sender:02x} (\033[33;1m{rssi}dBm\033[0m)\n"
                    "  \033[32;1mdbg: {dbg}\033[0m\n"

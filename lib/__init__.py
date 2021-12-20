@@ -5,4 +5,5 @@ from .registers import RF69_915MHZ as FREQ_915MHZ
 from .registers import RF69_MAX_DATA_LEN
 from .radio import Radio
 from .packet import Packet
+from .formatdefaults import FormatDefaults
 from .gateway import Gateway

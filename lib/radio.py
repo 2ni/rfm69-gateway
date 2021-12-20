@@ -171,6 +171,22 @@ class Radio:
         self._networkID = network_id
         self._writeReg(REG_SYNCVALUE2, network_id)
 
+    def set_power_level_relative(self, level_change):
+        """ return 0 if limit reached """
+        if (self.powerLevel == 23 and level_change > 0) or (self.powerLevel == 0 and level_change < 0):
+            return 0
+
+        new_level = self.powerLevel + level_change
+        new_level = 0 if new_level < 0 else new_level
+        new_level = 23 if new_level > 23 else new_level
+
+        self.set_power_level(new_level)
+
+        return 0 if (new_level == 0 or new_level == 23) else 1
+
+    def get_power_level(self):
+        return self.powerLevel
+
     def set_power_level(self, level):
         """Set the transmit power level
 
