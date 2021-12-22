@@ -10,6 +10,8 @@ from .registers import *
 from .packet import Packet
 from .config import get_config
 
+log = logging.getLogger(__name__)
+
 
 class Radio:
     """RFM69 Radio interface for the Raspberry PI.
@@ -33,15 +35,9 @@ class Radio:
         spiDevice (int): SPI device number.
         spyMode (bool): Listen to all messages not just those addressed to this node ID.
         encryptionKey (str): 16 character encryption key.
-        verbose (bool): Verbose mode - Activates logging to console.
     """
 
     def __init__(self, freqBand, nodeID, networkID=100, **kwargs):
-        print("initializing")
-        self.logger = None
-        if kwargs.get('verbose', False):
-            self.logger = self._init_log()
-
         self.auto_acknowledge = kwargs.get('autoAcknowledge', True)
         self.isRFM69HW = kwargs.get('isHighPower', True)
         self.intPin = kwargs.get('interruptPin', 18)
@@ -444,7 +440,7 @@ class Radio:
         return False
 
     def _sendFrame(self, toAddress, buff, requestACK, sendACK):
-        #  print("sending | ", end="")
+        #  log.debug("sending | ", end="")
         self._setMode(RF69_MODE_STANDBY)
         while (self._readReg(REG_IRQFLAGS1) & RF_IRQFLAGS1_MODEREADY) == 0x00:
             pass
@@ -479,7 +475,7 @@ class Radio:
                 pass
 
         self._setMode(RF69_MODE_RX)
-        #  print("sent | ", end="")
+        #  log.debug("sent | ", end="")
 
     def _readRSSI(self, forceTrigger=False):
         rssi = 0
@@ -529,7 +525,8 @@ class Radio:
 
         Puts the radio to sleep and cleans up the GPIO connections.
         """
-        print("\rshutting down")
+        log.info("")
+        log.info("shutting down")
         GPIO.remove_event_detect(self.intPin)
         self._modeLock.acquire()
         self._setHighPower(False)
@@ -544,26 +541,6 @@ class Radio:
 
     def __repr__(self):  # pragma: no cover
         return "Radio()"
-
-    # pylint: disable=no-self-use
-    def _init_log(self):
-        logging.basicConfig(level=logging.DEBUG)
-        logger = logging.getLogger(__name__)
-        handler = logging.StreamHandler()
-        handler.setLevel(logging.DEBUG)
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(thread)d - %(message)s')
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
-        logger.propagate = False
-        return logger
-
-    def _debug(self, *args):  # pragma: no cover
-        if self.logger is not None:
-            self.logger.debug(*args)
-
-    def _error(self, *args):  # pragma: no cover
-        if self.logger is not None:
-            self.logger.error(*args)
 
     #
     # Radio interrupt handler
@@ -588,7 +565,7 @@ class Radio:
                     payload_length = 66
 
                 if not (self.spyMode or target_id == self.address or target_id == RF69_BROADCAST_ADDR):
-                    self._debug("Ignore Interrupt")
+                    # log.debug("Ignore Interrupt")
                     self._intLock.release()
                     self.begin_receive()
                     return
@@ -601,19 +578,19 @@ class Radio:
                 rssi = self._readRSSI()
 
                 if ack_received:
-                    self._debug("Incoming ack from {}".format(sender_id))
+                    # log.debug("Incoming ack from {}".format(sender_id))
                     # Record acknowledgement
                     with self._ackLock:
                         self.acks.setdefault(sender_id, 1)
                         self._ackLock.notify_all()
                 elif ack_requested:
-                    self._debug("replying to ack request")
-                else:
-                    self._debug("Other ??")
+                    pass
+                    # TODO
+                    # log.debug("replying to ack request")
 
                 # When message received
                 if not ack_received:
-                    self._debug("Incoming data packet")
+                    # log.debug("Incoming data packet")
                     # self._packetQueue.put(
                     #     Packet(int(target_id), int(sender_id), int(rssi), list(data))
                     # )
@@ -625,7 +602,7 @@ class Radio:
 
                 # Send acknowledgement if needed
                 if ack_requested and self.auto_acknowledge:
-                    self._debug("Sending an ack")
+                    # log.debug("Sending an ack")
                     self._intLock.release()
                     self.send_ack(sender_id)
                     self.begin_receive()

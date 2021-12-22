@@ -15,12 +15,14 @@ import threading
 from . import Radio, FREQ_868MHZ, FormatDefaults
 from .registers import REG_VERSION
 from random import randrange
+import logging
+log = logging.getLogger(__name__)
 
 
 class Gateway:
 
     def __init__(self, gateway_id=99, network_id=33,
-                 isHighPower=True, verbose=False, interruptPin=18, resetPin=29, autoAcknowledge=False, power=23, dataPacketTypes=None):
+                 isHighPower=True, verbose=False, interruptPin=18, resetPin=29, autoAcknowledge=False, power=23, dataPacketTypes=None, debugLevel=logging.DEBUG):
 
         self.types = dataPacketTypes
         self.formatdefaults = FormatDefaults()  # we use our own "".format() which sets placeholder=0 if not defined
@@ -46,7 +48,7 @@ class Gateway:
                            isHighPower=isHighPower, verbose=verbose, interruptPin=interruptPin,
                            resetPin=resetPin, autoAcknowledge=autoAcknowledge, power=power)
 
-        print("Radio version: 0x{:02X} frq: {} node:0x{:02X}({}) network:{} intPin: {} rstPin: {} csPin: {}".format(
+        log.info("Radio version: 0x{:02X} frq: {} node:0x{:02X}({}) network:{} intPin: {} rstPin: {} csPin: {}".format(
             self.radio._readReg(REG_VERSION),
             self.radio._freqBand,
             self.radio.address,
@@ -70,7 +72,7 @@ class Gateway:
         receiveThread.daemon = True
         receiveThread.start()
 
-        print("waiting for data")
+        log.info("waiting for data")
 
     @staticmethod
     def eval_expression(input_string):
@@ -109,14 +111,14 @@ class Gateway:
                 packet_data = self.eval_expression(self.formatdefaults.format(definition["exp"], value))
 
             data_stream += [packet_type_len] + packet_data
-            #  print("data_stream", [self.to_hex(x) for x in data_stream])
+            #  log.debug("data_stream", [self.to_hex(x) for x in data_stream])
         return data_stream
 
     def decode_payload(self, payload):
         """
         payload = [0x01, 0xff, 0x14, 0x12, 0x34, 0x56, 0x78]
         """
-        # print("payload", ["0x{:02x}".format(x) for x in payload])
+        # log.debug("payload", ["0x{:02x}".format(x) for x in payload])
         total_len = len(payload)
         i = 0
         data_packets = {}
@@ -180,10 +182,10 @@ class Gateway:
             # This call will block until a packet is received
             packet = self.radio.get_packet()
             data_packets_received = self.decode_payload(packet.data)
-            print("received {} ({}dBm)".format(data_packets_received, packet.RSSI))
+            log.debug("received {} ({}dBm)".format(data_packets_received, packet.RSSI))
             to_upload = {}
             rssi_data_to_upload = {}
-            print("  node before", self.nodes.get(packet.sender, {}))
+            log.debug("  node before: {}".format(self.nodes.get(packet.sender, {})))
             if (packet.ack_requested):
                 rssi_dp = data_packets_received.get("rssi", {})
                 self.nodes[packet.sender] = self.nodes.get(packet.sender, {})  # ensure self.nodes[nodeId] exists
@@ -215,7 +217,7 @@ class Gateway:
                         self.delFromDict(self.nodes[packet.sender], "random_rssi_request")
 
                         rssi_correction = self.get_rssi_correction(last_rssi)
-                        print("  gw pwr: {} -> {} ({}dBm)".format(self.radio.powerLevel, rssi_correction, last_rssi))
+                        log.debug("  gw pwr: {} -> {} ({}dBm)".format(self.radio.powerLevel, rssi_correction, last_rssi))
                         if rssi_correction and self.radio.set_power_level_relative(rssi_correction):
                             rssi_data_to_upload["request"] = 1  # more correction possible, request reception rssi from node
                         else:
@@ -247,7 +249,7 @@ class Gateway:
 
             #  if custom_upload is False -> send_ack was processed in callback
             if packet.ack_requested and custom_upload:
-                print("  sending", {**to_upload, **custom_upload})
+                log.debug("  sending {}".format({**to_upload, **custom_upload}))
                 #  try seems to be too slow -> more timeouts in node
                 """
                 stream = []
@@ -255,20 +257,20 @@ class Gateway:
                     try:
                         stream += self.create_data_packets({k: v})
                     except Exception as e:
-                        print("creating data packet {}: {} failed ({})".format(k, v, type(e).__name__))
+                        log.warn("creating data packet {}: {} failed ({})".format(k, v, type(e).__name__))
 
                 self.radio.send_ack(packet.sender, stream)
                 """
                 try:
                     self.radio.send_ack(packet.sender, self.create_data_packets({**to_upload, **custom_upload}))
                 except Exception as e:
-                    print("failed to send {}".format(type(e).__name__))
+                    log.warn("failed to send {}".format(type(e).__name__))
 
                 #  self.radio.send_ack(packet.sender, self.create_data_packets(to_upload))
                 #  radio.send_ack(packet.sender, dt.now().strftime("%Y-%m-%d %H:%M:%S"))  # return the current datestamp to the sender
 
             """
-            print(("from 0x{sender:02x} (\033[33;1m{rssi}dBm\033[0m)\n"
+            log.debug(("from 0x{sender:02x} (\033[33;1m{rssi}dBm\033[0m)\n"
                    "  \033[32;1mdbg: {dbg}\033[0m\n"
                    "  \033[32;1mvcc: {vcc}\033[0m\n"
                    "  received raw: {received}\n"
@@ -289,17 +291,17 @@ class Gateway:
         count = 0
         while True:
             count = (count + 1) % 255
-            print("sending {} | ".format(count), end="", flush=True)
+            log.debug("sending {} | ".format(count), end="", flush=True)
             self.radio._sendFrame(target, "{}".format(count), 0, 0)
-            print("")
-            # print("sleep | ", end="", flush=True)
+            log.debug("")
+            # log.debug("sleep | ", end="", flush=True)
             #  time.sleep(2)
-            #  print("retry | ", end="", flush=True)
+            #  log.debug("retry | ", end="", flush=True)
             #  radio._sendFrame(recipient_id, "}".format(count), 0, 0)
-            # print("done")
+            # log.debug("done")
             # if radio.send(recipient_id, "{}".format(count), attempts=1, waitTime=100):
-            #     print("ack")
+            #     log.debug("ack")
             # else:
-            #     print("no ack")
+            #     log.debug("no ack")
 
             time.sleep(2)
