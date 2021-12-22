@@ -132,10 +132,13 @@ class Gateway:
                 data.append(payload[i + ii])
                 ii += 1
 
-            #  TODO catch error if can not decode "exp"
             # check if type defined
             if definition:
-                data_packets[definition["name"]] = self.eval_expression(definition["exp"].format(*data))
+                try:
+                    data_packets[definition["name"]] = self.eval_expression(definition["exp"].format(*data))
+                except:
+                    data_packets["unknown"] = data_packets.get("unknown", {})  # create if not exists
+                    data_packets["unknown"][data_type] = data
             else:
                 data_packets["unknown"] = data_packets.get("unknown", {})  # create if not exists
                 data_packets["unknown"][data_type] = data
@@ -152,7 +155,16 @@ class Gateway:
     def to_hex(val, nbits=8):
         return hex((val + (1 << nbits)) % (1 << nbits))
 
+    @staticmethod
+    def delFromDict(dictionary, *elements):
+        for element in elements:
+            if element in dictionary.keys():
+                del dictionary[element]
+
     def get_rssi_correction(self, rssi):
+        if not rssi:
+            return 0
+
         """ return 0 if limit reached or no change necessary """
         rssi_diff = self.rssi_target - rssi
         rssi_diff_absolute = abs(rssi_diff)
@@ -171,11 +183,10 @@ class Gateway:
             print("received {} ({}dBm)".format(data_packets_received, packet.RSSI))
             to_upload = {}
             rssi_data_to_upload = {}
-            print("  node", self.nodes.get(packet.sender, {}))
+            print("  node before", self.nodes.get(packet.sender, {}))
             if (packet.ack_requested):
                 rssi_dp = data_packets_received.get("rssi", {})
                 self.nodes[packet.sender] = self.nodes.get(packet.sender, {})  # ensure self.nodes[nodeId] exists
-                self.radio.set_power_level(self.nodes[packet.sender].get("power_level", 23))
                 if "atc_on_node" not in self.nodes[packet.sender]:
                     self.nodes[packet.sender]["atc_on_node"] = True
                 if "atc_on_gw" not in self.nodes[packet.sender]:
@@ -184,8 +195,12 @@ class Gateway:
                 if rssi_dp.get("reset"):
                     self.nodes[packet.sender]["atc_on_node"] = True  # atc running
                     self.nodes[packet.sender]["atc_on_gw"] = True
+                    self.delFromDict(self.nodes[packet.sender], "power_level", "random_rssi_request")
+
                 elif rssi_dp.get("limit"):
                     self.nodes[packet.sender]["atc_on_node"] = False  # atc was done at some point
+
+                self.radio.set_power_level(self.nodes[packet.sender].get("power_level", 23))
 
                 # run atc on node (always unless limit reached, whereas node needs to reset to re-start)
                 if self.nodes[packet.sender]["atc_on_node"]:
@@ -197,8 +212,7 @@ class Gateway:
                 last_rssi = -rssi_dp.get("last_rssi", 0)
                 if self.nodes[packet.sender]["atc_on_gw"] or last_rssi:
                     if last_rssi:
-                        if "random_rssi_request" in self.nodes[packet.sender].keys():
-                            del self.nodes[packet.sender]["random_rssi_request"]
+                        self.delFromDict(self.nodes[packet.sender], "random_rssi_request")
 
                         rssi_correction = self.get_rssi_correction(last_rssi)
                         print("  gw pwr: {} -> {} ({}dBm)".format(self.radio.powerLevel, rssi_correction, last_rssi))
@@ -234,6 +248,7 @@ class Gateway:
             #  if custom_upload is False -> send_ack was processed in callback
             if packet.ack_requested and custom_upload:
                 print("  sending", {**to_upload, **custom_upload})
+                #  TODO try catch to avoid crash
                 self.radio.send_ack(packet.sender, self.create_data_packets({**to_upload, **custom_upload}))
                 #  self.radio.send_ack(packet.sender, self.create_data_packets(to_upload))
                 #  radio.send_ack(packet.sender, dt.now().strftime("%Y-%m-%d %H:%M:%S"))  # return the current datestamp to the sender

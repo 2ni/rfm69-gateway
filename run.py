@@ -41,6 +41,7 @@ def callback(gateway, download, upload, sender, ack_requested, rssi):
 
     # do some stuff with data from node
     # should not block and be fast, best async
+    # to see if node asked for a reset -> check download["rssi"]["reset"]
 
     print("  {} from 0x{:06x} ({}dBm)".format(colorize("green", download), sender, rssi), flush=True)
 
