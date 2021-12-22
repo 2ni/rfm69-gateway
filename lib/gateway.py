@@ -248,8 +248,22 @@ class Gateway:
             #  if custom_upload is False -> send_ack was processed in callback
             if packet.ack_requested and custom_upload:
                 print("  sending", {**to_upload, **custom_upload})
-                #  TODO try catch to avoid crash
-                self.radio.send_ack(packet.sender, self.create_data_packets({**to_upload, **custom_upload}))
+                #  try seems to be too slow -> more timeouts in node
+                """
+                stream = []
+                for k, v in {**to_upload, **custom_upload}.items():
+                    try:
+                        stream += self.create_data_packets({k: v})
+                    except Exception as e:
+                        print("creating data packet {}: {} failed ({})".format(k, v, type(e).__name__))
+
+                self.radio.send_ack(packet.sender, stream)
+                """
+                try:
+                    self.radio.send_ack(packet.sender, self.create_data_packets({**to_upload, **custom_upload}))
+                except Exception as e:
+                    print("failed to send {}".format(type(e).__name__))
+
                 #  self.radio.send_ack(packet.sender, self.create_data_packets(to_upload))
                 #  radio.send_ack(packet.sender, dt.now().strftime("%Y-%m-%d %H:%M:%S"))  # return the current datestamp to the sender
 
