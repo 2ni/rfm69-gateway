@@ -240,12 +240,11 @@ class Gateway:
                     to_upload = {"rssi": rssi_data_to_upload}
 
             # call callback to process data from node
-            custom_upload = f_callback(self, **{
-                "download": data_packets_received,
+            custom_upload = f_callback(**{
+                "data": data_packets_received,
                 "upload": to_upload,
-                "sender": packet.sender,
-                "ack_requested": packet.ack_requested,
-                "rssi": packet.RSSI})
+                "packet": packet,
+            })
 
             #  if custom_upload is False -> send_ack was processed in callback
             if packet.ack_requested and custom_upload:

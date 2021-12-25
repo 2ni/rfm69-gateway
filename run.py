@@ -29,31 +29,27 @@ def colorize(color, str):
         return str
 
 
-def process_data(download, sender, rssi):
-    # to see if node asked for a reset -> check download["rssi"]["reset"]
-    print("  {} from 0x{:06x} ({}dBm)".format(colorize("green", download), sender, rssi), flush=True)
+def process_data(data, packet, upload):
+    # to see if node asked for a reset -> check data["rssi"]["reset"]
+    print("  {} from 0x{:06x} ({}dBm)".format(colorize("green", data), packet.sender, packet.RSSI), flush=True)
 
 
-def callback(gateway, download, upload, sender, ack_requested, rssi):
+def callback(data, upload, packet):
     """
     @return dict with data to upload. Return false if send_ack processed in this function
-    download: data from node
-        download["unknown"] contains data not configured in dataPacketTypes
+    data: decoded data received from the node
+        data["unknown"] contains data not configured in dataPacketTypes
     upload: potential system upload data which will be sent to gw (don't touch)
-    sender: ID from node
-    ack_requested: if node requested an ack
-    rssi: RSSI of data receiption
-    gateway: can be used to send the ack in this code to not block the ack response, eg:
-        if ack_requested:
-            now = int(time.time())
-            gateway.radio.send_ack(sender, self.create_data_packets({**upload, **{"timestamp": now}}))
-
-        # do stuff with the data after sending ack
+    packet:
+        packet.sender         ID from sender node
+        packet.ack_requested  if node requested an ack
+        packet.RSSI           RSSI of data reception
+        packet.payload        raw data received from the node
     """
 
     # do some stuff with data from node
     # should not block and be fast, that's why we use threads
-    thread = threading.Thread(target=process_data, args=(download, sender, rssi))
+    thread = threading.Thread(target=process_data, args=(data, packet, upload))
     thread.start()
 
     # send data back to node with ack
