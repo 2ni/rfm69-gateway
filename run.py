@@ -11,10 +11,12 @@ dataPacketTypes = {
         0x00: {"name": "dbg", "exp": "{0}"},  # 1byte
         0x01: {"name": "vcc", "exp": "{0}<<8 | {1}"},  # 2bytes
         0x08: {"name": "humidity", "exp": "{0}"},  # 1byte
-        0x09: {"name": "temperature", "exp": "{0}<<8 | {1}"}  # 2bytes
+        0x09: {"name": "temperature", "exp": "{0}<<8 | {1}"},  # 2bytes
+        0x0a: {"name": "threshold", "exp": "{0}"},  # 1byte
     },
     "upload": {
         "timestamp": {"type": 0x01, "len": 4, "exp": "[({0} >> i & 0xff) for i in (24, 16, 8, 0)]"},
+        "threshold": {"type": 0x0a, "len": 1, "exp": "{0}"},
     }
 }
 
