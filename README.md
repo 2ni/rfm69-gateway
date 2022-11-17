@@ -15,6 +15,13 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+### Run application
+```
+source .venv/bin/activate
+python run.py [-l info]
+deactivate
+```
+
 ### Debugging SPI
 [test](https://www.raspberrypi.org/documentation/hardware/raspberrypi/spi/README.md) if SPI is working:
 
@@ -81,7 +88,7 @@ all good! Version: 0x24
 ...
 ```
 
-## Run gateway
+## Run gateway only
 ```
 source .venv/bin/activate
 python gateway.py
