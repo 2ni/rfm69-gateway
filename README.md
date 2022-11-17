@@ -83,5 +83,7 @@ all good! Version: 0x24
 
 ## Run gateway
 ```
+source .venv/bin/activate
 python gateway.py
+deactivate
 ```
