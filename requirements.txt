@@ -1,1 +1,2 @@
 spidev
+RPi.GPIO

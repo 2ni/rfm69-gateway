@@ -20,7 +20,8 @@ pip install -r requirements.txt
 
 ### Reload SPI
 ```
-lsmod | grep spi          # to get spi module name, eg spi_bcm2835
+raspi-config              # enable spi on interface options
+lsmod | grep spi          # check if spi enabled and to get spi module name, eg spi_bcm2835
 sudo rmmod spi_bcm2835    # remove it
 sudo modprobe spi_bcm2835 # readd it
 
