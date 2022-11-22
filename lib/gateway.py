@@ -22,7 +22,7 @@ log = logging.getLogger(__name__)
 class Gateway:
 
     def __init__(self, gateway_id=99, network_id=33,
-                 isHighPower=True, verbose=False, interruptPin=18, resetPin=29, autoAcknowledge=False, power=23, dataPacketTypes=None, debugLevel=logging.DEBUG):
+                 isHighPower=True, verbose=False, interruptPin=18, resetPin=29, autoAcknowledge=False, power=23, dataPacketTypes=None, debugLevel=logging.DEBUG, rssiTarget=-90):
 
         self.types = dataPacketTypes
         self.formatdefaults = FormatDefaults()  # we use our own "".format() which sets placeholder=0 if not defined
@@ -42,13 +42,13 @@ class Gateway:
         }  # 16bit
         self.nodes = {}  # info about the node we communicate with (atc_on_node, atc_on_gw, power_level)
 
-        self.rssi_target = -90
+        self.rssi_target = rssiTarget
 
         self.radio = Radio(FREQ_868MHZ, gateway_id, network_id,
                            isHighPower=isHighPower, verbose=verbose, interruptPin=interruptPin,
                            resetPin=resetPin, autoAcknowledge=autoAcknowledge, power=power)
 
-        log.info("Radio version: 0x{:02X} frq: {} node:0x{:02X}({}) network:{} intPin: {} rstPin: {} csPin: {}".format(
+        log.info("Radio version: 0x{:02X} frq: {} node:0x{:02X}({}) network:{} intPin: {} rstPin: {} csPin: {}, rssiTarget: {}".format(
             self.radio._readReg(REG_VERSION),
             self.radio._freqBand,
             self.radio.address,
@@ -56,7 +56,8 @@ class Gateway:
             self.radio._networkID,
             self.radio.intPin,
             self.radio.rstPin,
-            self.radio.csPin
+            self.radio.csPin,
+            self.rssi_target
         ))
 
     def __enter__(self):

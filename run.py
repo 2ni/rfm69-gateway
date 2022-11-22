@@ -65,11 +65,12 @@ def callback(data, upload, packet):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="run rfm69 gateway", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('-l', '--level', type=str, default="warn", choices=["debug", "info", "warn", "error", "critical"], help="Logging level")
+    parser.add_argument('-r', '--rssiTarget', type=int, default=-90, help="Target rssi, usually -90")
     args = parser.parse_args()
     level = logging.getLevelName(args.level.upper())
     logging.basicConfig(format="%(asctime)s: %(message)s", datefmt='%Y-%m-%d %H:%M:%S', level=level)
     try:
-        with Gateway(dataPacketTypes=dataPacketTypes, debugLevel=level) as gateway:
+        with Gateway(dataPacketTypes=dataPacketTypes, debugLevel=level, rssiTarget=args.rssiTarget) as gateway:
             gateway.listen(callback)
 
             while True:
